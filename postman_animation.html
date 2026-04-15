@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Postman Algorithm Solver (CPP) - Pro Version</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background: #fff; }
+        .graph-area {
+            background-image: radial-gradient(#e5e7eb 1.5px, transparent 1.5px);
+            background-size: 30px 30px;
+            cursor: crosshair;
+        }
+        .node { fill: #fff; stroke: #2563eb; stroke-width: 2.5; cursor: grab; }
+        .node:active { cursor: grabbing; }
+        .node-label { font-size: 14px; font-weight: 700; fill: #1e40af; pointer-events: none; user-select: none; }
+        .edge { stroke: #cbd5e1; stroke-width: 2; transition: all 0.3s; }
+        .edge-virtual { stroke-dasharray: 4; stroke: #94a3b8; }
+        .edge-weight { font-size: 11px; fill: #64748b; font-weight: 600; background: white; pointer-events: none; }
+        .visited { stroke: #10b981 !important; stroke-width: 5px; opacity: 0.9; }
+        #postman { font-size: 30px; pointer-events: none; transition: all 0.5s linear; z-index: 100; }
+        #log-panel { font-family: 'Fira Code', monospace; scroll-behavior: smooth; }
+        .log-entry { border-left: 2px solid #3b82f6; padding-left: 10px; margin-bottom: 5px; animation: slideIn 0.2s ease; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <aside class="w-1/4 border-r bg-slate-50 flex flex-col shadow-2xl z-30">
+        <div class="p-6 bg-white border-b">
+            <h1 class="text-xl font-bold text-slate-800 tracking-tight">Postman Solver <span class="text-blue-600">Pro</span></h1>
+            <p class="text-[10px] text-slate-400 font-bold uppercase mt-1">Algorithm: Chinese Postman Problem</p>
+        </div>
+
+        <div class="flex-1 overflow-hidden flex flex-col p-4 gap-4">
+            <div class="h-1/3 flex flex-col">
+                <label class="text-[11px] font-bold text-slate-500 mb-2 uppercase">Dữ liệu đồ thị (u v w)</label>
+                <textarea id="graphInput" class="flex-1 p-3 text-sm border rounded-lg bg-white shadow-inner outline-none focus:ring-2 focus:ring-blue-500 font-mono">
+1 2 10
+2 3 5
+3 1 6
+2 5 6
+6 5 2
+6 2 4</textarea>
+            </div>
+
+            <div class="flex-1 flex flex-col min-h-0">
+                <label class="text-[11px] font-bold text-slate-500 mb-2 uppercase">Nhật ký thuật toán</label>
+                <div id="log-panel" class="flex-1 bg-slate-900 text-blue-100 p-4 rounded-lg text-[12px] overflow-y-auto shadow-inner leading-relaxed">
+                    <div class="text-slate-500 italic">Hệ thống sẵn sàng...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 bg-white border-t space-y-2">
+            <button onclick="initGraph()" class="w-full bg-slate-100 text-slate-700 py-2 rounded-md hover:bg-slate-200 transition font-semibold text-sm">Cập nhật đồ thị</button>
+            <button onclick="solveCPP()" id="btnSolve" class="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition font-bold shadow-lg shadow-blue-100 flex justify-center items-center gap-2">
+                🚀 Tìm đường tối ưu & Chạy
+            </button>
+        </div>
+    </aside>
+
+    <main class="flex-1 relative graph-area overflow-hidden bg-white" id="workspace">
+        <div id="postman" class="absolute hidden">📮</div>
+        <svg id="canvas" class="w-full h-full">
+            <g id="edges-layer"></g>
+            <g id="nodes-layer"></g>
+        </svg>
+        
+        <div class="absolute top-6 left-6 flex gap-4">
+            <div class="bg-white/90 border p-3 rounded-lg shadow-sm">
+                <p class="text-[10px] text-slate-400 font-bold uppercase">Trạng thái</p>
+                <p id="status-text" class="text-sm font-semibold text-slate-700">Chờ lệnh...</p>
+            </div>
+            <div class="bg-white/90 border p-3 rounded-lg shadow-sm">
+                <p class="text-[10px] text-slate-400 font-bold uppercase">Tổng trọng số</p>
+                <p id="total-weight-text" class="text-sm font-bold text-blue-600">0</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let nodes = [], edges = [], isRunning = false, dragTarget = null;
+        const canvas = document.getElementById('canvas'), postman = document.getElementById('postman'), logPanel = document.getElementById('log-panel');
+
+        // --- HÀM LOG ---
+        function addLog(u, v, w, sum) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerHTML = `<span class="text-green-400 font-bold">${u} → ${v}</span> <span class="text-slate-500">|+ ${w}|</span> → <span class="text-yellow-400 font-bold">${sum}</span>`;
+            logPanel.appendChild(div);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        function sysLog(msg, color = 'text-blue-300') {
+            const div = document.createElement('div');
+            div.className = `mb-2 italic ${color}`;
+            div.innerText = `[INFO]: ${msg}`;
+            logPanel.appendChild(div);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        // --- KÉO THẢ ---
+        canvas.onmousedown = e => {
+            const group = e.target.closest('.node-group');
+            if (group) dragTarget = nodes.find(n => n.id == group.dataset.id);
+        };
+        window.onmousemove = e => {
+            if (dragTarget) {
+                const r = canvas.getBoundingClientRect();
+                dragTarget.x = e.clientX - r.left; dragTarget.y = e.clientY - r.top;
+                render();
+            }
+        };
+        window.onmouseup = () => dragTarget = null;
+
+        // --- KHỞI TẠO ĐỒ THỊ ---
+        function initGraph() {
+            const lines = document.getElementById('graphInput').value.trim().split('\n');
+            const newEdges = [], nodeIds = new Set();
+            lines.forEach(l => {
+                const [u, v, w] = l.trim().split(/\s+/).map(Number);
+                if (!isNaN(u) && !isNaN(v)) {
+                    newEdges.push({ u, v, w: w || 0 });
+                    nodeIds.add(u); nodeIds.add(v);
+                }
+            });
+            const sortedIds = Array.from(nodeIds).sort((a,b)=>a-b);
+            nodes = sortedIds.map((id, i) => {
+                const ex = nodes.find(n => n.id === id);
+                return ex || { id, x: 200 + 400 * Math.random(), y: 200 + 300 * Math.random() };
+            });
+            edges = newEdges;
+            render();
+            sysLog(`Đã tải đồ thị với ${nodes.length} đỉnh, ${edges.length} cạnh.`);
+        }
+
+        function render() {
+            const eLayer = document.getElementById('edges-layer'), nLayer = document.getElementById('nodes-layer');
+            eLayer.innerHTML = ''; nLayer.innerHTML = '';
+            edges.forEach(e => {
+                const u = nodes.find(n => n.id === e.u), v = nodes.find(n => n.id === e.v);
+                if (!u || !v) return;
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", u.x); line.setAttribute("y1", u.y);
+                line.setAttribute("x2", v.x); line.setAttribute("y2", v.y);
+                line.setAttribute("class", "edge");
+                line.setAttribute("id", `edge-${Math.min(u.id, v.id)}-${Math.max(u.id, v.id)}`);
+                eLayer.appendChild(line);
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", (u.x+v.x)/2); txt.setAttribute("y", (u.y+v.y)/2 - 5);
+                txt.setAttribute("class", "edge-weight"); txt.setAttribute("text-anchor", "middle");
+                txt.textContent = e.w; eLayer.appendChild(txt);
+            });
+            nodes.forEach(n => {
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.className.baseVal = "node-group"; g.dataset.id = n.id;
+                const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                c.setAttribute("cx", n.x); c.setAttribute("cy", n.y); c.setAttribute("r", "18"); c.setAttribute("class", "node");
+                const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                t.setAttribute("x", n.x); t.setAttribute("y", n.y); t.setAttribute("class", "node-label");
+                t.setAttribute("text-anchor", "middle"); t.setAttribute("dominant-baseline", "central");
+                t.textContent = n.id; g.appendChild(c); g.appendChild(t); nLayer.appendChild(g);
+            });
+        }
+
+        // --- THUẬT TOÁN CHINESE POSTMAN (CPP) ---
+        async function solveCPP() {
+            if (isRunning || nodes.length < 2) return;
+            isRunning = true;
+            logPanel.innerHTML = '';
+            sysLog("Bắt đầu giải bài toán Người đưa thư...");
+
+            // 1. Tìm các đỉnh bậc lẻ
+            const adj = {}; 
+            nodes.forEach(n => adj[n.id] = []);
+            edges.forEach(e => { adj[e.u].push({to: e.v, w: e.w}); adj[e.v].push({to: e.u, w: e.w}); });
+            
+            const oddNodes = nodes.filter(n => adj[n.id].length % 2 !== 0).map(n => n.id);
+            sysLog(`Đỉnh bậc lẻ tìm thấy: [${oddNodes.join(', ')}]`);
+
+            let augmentedEdges = JSON.parse(JSON.stringify(edges));
+
+            if (oddNodes.length > 0) {
+                sysLog("Đồ thị không phải Euler. Đang tính toán đường đi lặp lại tối ưu...");
+                // Tìm đường đi ngắn nhất giữa các đỉnh lẻ (Dijkstra cho mọi cặp lẻ)
+                const dists = getShortestPathsBetween(oddNodes, adj);
+                const pairs = findBestMatching(oddNodes, dists);
+                
+                sysLog("Các cạnh/đường đi cần đi lặp lại:");
+                pairs.forEach(p => {
+                    sysLog(`Nối ${p.u}-${p.v} (Trọng số thêm: ${p.w})`, 'text-yellow-500');
+                    // Thêm cạnh ảo vào đồ thị tăng cường (để bưu tá đi lại cạnh này)
+                    augmentedEdges.push({ u: p.u, v: p.v, w: p.w, virtual: true });
+                });
+            } else {
+                sysLog("Đồ thị đã là Euler (mọi đỉnh bậc chẵn).");
+            }
+
+            // 3. Tìm chu trình Euler trên đồ thị augmentedEdges
+            const finalPath = findEulerianCircuit(augmentedEdges, nodes[0].id);
+            
+            // 4. Animation
+            await runAnimation(finalPath);
+            isRunning = false;
+        }
+
+        function getShortestPathsBetween(oddNodes, adj) {
+            const results = {};
+            oddNodes.forEach(start => {
+                results[start] = {};
+                // Simple Dijkstra
+                const d = {}, pq = [[0, start]];
+                nodes.forEach(n => d[n.id] = Infinity); d[start] = 0;
+                while(pq.length) {
+                    const [dist, u] = pq.shift();
+                    if(dist > d[u]) continue;
+                    adj[u].forEach(e => {
+                        if(d[u] + e.w < d[e.to]) {
+                            d[e.to] = d[u] + e.w;
+                            pq.push([d[e.to], e.to]);
+                        }
+                    });
+                    pq.sort((a,b)=>a[0]-b[0]);
+                }
+                oddNodes.forEach(v => results[start][v] = d[v]);
+            });
+            return results;
+        }
+
+        function findBestMatching(odds, dists) {
+            // Vét cạn các cặp ghép (phù hợp vì số đỉnh lẻ thường ít)
+            let minWeight = Infinity, bestPairs = [];
+            function backtrack(remaining, currentPairs, currentWeight) {
+                if(remaining.length === 0) {
+                    if(currentWeight < minWeight) {
+                        minWeight = currentWeight; bestPairs = [...currentPairs];
+                    }
+                    return;
+                }
+                const u = remaining[0];
+                for(let i=1; i<remaining.length; i++) {
+                    const v = remaining[i];
+                    backtrack(
+                        remaining.filter(x => x !== u && x !== v),
+                        [...currentPairs, {u, v, w: dists[u][v]}],
+                        currentWeight + dists[u][v]
+                    );
+                }
+            }
+            backtrack(odds, [], 0);
+            return bestPairs;
+        }
+
+        function findEulerianCircuit(augEdges, startNode) {
+            const circuit = [];
+            const localAdj = {};
+            nodes.forEach(n => localAdj[n.id] = []);
+            augEdges.forEach((e, index) => {
+                localAdj[e.u].push({to: e.v, w: e.w, id: index});
+                localAdj[e.v].push({to: e.u, w: e.w, id: index});
+            });
+
+            const stack = [startNode];
+            const usedEdges = new Set();
+            while(stack.length > 0) {
+                const u = stack[stack.length - 1];
+                let foundEdge = false;
+                for(let i=0; i<localAdj[u].length; i++) {
+                    const e = localAdj[u][i];
+                    if(!usedEdges.has(e.id)) {
+                        usedEdges.add(e.id);
+                        stack.push(e.to);
+                        foundEdge = true;
+                        break;
+                    }
+                }
+                if(!foundEdge) circuit.push(stack.pop());
+            }
+            return circuit.reverse();
+        }
+
+        async function runAnimation(path) {
+            let currentTotal = 0;
+            document.querySelectorAll('.edge').forEach(e => e.classList.remove('visited'));
+            postman.classList.remove('hidden');
+            
+            document.getElementById('status-text').innerText = "Đang giao hàng...";
+
+            for (let i = 0; i < path.length - 1; i++) {
+                const uId = path[i], vId = path[i+1];
+                const nextNode = nodes.find(n => n.id === vId);
+                
+                // Tìm cạnh gốc để lấy trọng số
+                const edge = edges.find(e => (e.u === uId && e.v === vId) || (e.v === uId && e.u === vId));
+                const weight = edge ? edge.w : 0;
+                currentTotal += weight;
+
+                // Log & Text Update
+                addLog(uId, vId, weight, currentTotal);
+                document.getElementById('total-weight-text').innerText = currentTotal;
+
+                // Move
+                postman.style.left = `${nextNode.x - 15}px`;
+                postman.style.top = `${nextNode.y - 40}px`;
+
+                // Highlight cạnh
+                const eId = `edge-${Math.min(uId, vId)}-${Math.max(uId, vId)}`;
+                const el = document.getElementById(eId);
+                if (el) el.classList.add('visited');
+
+                await new Promise(r => setTimeout(r, 600));
+            }
+            sysLog("Đã hoàn thành lộ trình tối ưu!", "text-green-500 font-bold");
+            document.getElementById('status-text').innerText = "Hoàn thành!";
+        }
+
+        window.onload = initGraph;
+    </script>
+</body>
+</html>
